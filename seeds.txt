@@ -1,0 +1,32 @@
+# Repos known to have specifications, scanned first by:  python spec_hunter.py scan --seeds seeds.txt
+# One owner/repo per line. Missing or renamed repos are skipped with a message.
+
+# --- Per-module (per-IP) specs: the most useful for a spec template ---
+lowRISC/opentitan            # every IP: README overview, theory_of_operation, programmers_guide, interfaces, registers (.hjson), testplan (.hjson)
+chipsalliance/caliptra-rtl   # hardware spec, integration spec, per-block docs, testplan
+chipsalliance/caliptra-ss    # subsystem hardware + integration specs
+chipsalliance/adams-bridge   # hardware specification (ML-DSA accelerator)
+pulp-platform/axi            # doc/<module>.md for crossbar, mux, demux, ... (parameters, ports, behavior)
+pulp-platform/axi_stream
+pulp-platform/common_cells
+stnolting/neorv32            # VHDL: datasheet with one chapter per SoC module (docs/datasheet/soc_*.adoc)
+
+# --- Processor documentation (CPU + units like ALU, decoder, LSU) ---
+lowRISC/ibex                 # docs/ : pipeline, ALU, register file, LSU, CSRs, verification
+openhwgroup/cva6             # design and user documentation
+openhwgroup/cv32e40p         # user manual
+openhwgroup/core-v-verif     # verification plans per core feature
+chipsalliance/Cores-VeeR-EL2 # programmer's reference manual
+YosysHQ/picorv32
+olofk/serv
+
+# --- Classic IP cores with PDF/TeX specs ---
+ZipCPU/zipcpu
+ZipCPU/wbuart32
+ZipCPU/wb2axip
+fpganinja/taxi               # many small modules, README per module group
+
+# --- Spec -> RTL benchmarks (many short natural-language specs) ---
+hkust-zhiyao/RTLLM           # design_description.txt per design
+NVlabs/verilog-eval          # spec-to-rtl problem statements
+NVlabs/cvdp_benchmark        # design and verification problems with specs
