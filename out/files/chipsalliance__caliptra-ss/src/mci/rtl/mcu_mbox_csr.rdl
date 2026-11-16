@@ -1,0 +1,200 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+addrmap mcu_mbox_csr {
+    desc="address maps for mbox register space";
+    littleendian = true;
+    default hw = na;
+    signal {activelow; async; cpuif_reset; field_reset;} rst_b;
+    signal {activelow; async;} pwrgood;
+    default resetsignal=rst_b;
+    
+
+
+
+    //signal to indicate requests
+    //Each signal names the single role permitted to write the associated CSRs.
+    signal {desc = "Current SRAM owner request. Gates CMD, DLEN and EXECUTE.";} valid_sram_owner_req;
+    signal {desc = "Target user request.";} valid_target_req;
+    signal {desc = "Root AXI user request. MCU is typically Root.";} valid_root_req;
+    signal {desc = "Root target-configuration write enable. Deasserts while TARGET_USER_VALID is set.";} target_cfg_write_en;
+
+    // MBOX SRAM
+    // Shall be first in memory map to reduce address waste.
+    external mem {
+        name = "Mailbox SRAM";
+        desc = "Mailbox SRAM storage. The maximum size is 2MB, but is configurable by the integration team. Cleared from 0x0 to max DLEN after lock is released.
+        [br] Accessible only by the current SRAM owner. Ownership is derived from LOCK, EXECUTE, TARGET_USER_VALID, and CMD_STATUS.";
+        sw = rw; 
+        mementries = 524288;
+        memwidth = 32; 
+    } MBOX_SRAM;
+
+
+    // lock register
+    // set on read, indicate to mailbox when modified
+    // clear comes from mailbox control
+    reg {
+        name="Mailbox Lock";
+        desc="Mailbox lock register for mailbox access, reading 0 will set the lock. On reset release lock is set to root_user (MCU) to allow SRAM clearing";
+        field {rset; sw=r; hw=r; hwset=true; hwclr=true; precedence=hw; swmod=true;} lock=0;
+    } mbox_lock;
+
+    // USER register
+    // store AXI USER from interface when setting lock
+    reg {
+        name="Mailbox USER";
+        desc="Stores the AXI USER that locked the mailbox. Cleared when lock is cleared.";
+        field {sw=r; hw=rw; we; hwclr;} user[32]=0;
+    } mbox_user;
+    
+    mbox_user.user->we  = mbox_lock.lock->hwset;
+
+    
+    // Target USER register
+    reg {
+        name="Mailbox Target USER";
+        desc="Stores the AXI USER for the target user. The value is used only while TARGET_USER_VALID is set.
+        [br] Writable only by Root while TARGET_USER_VALID is 0. Setting TARGET_USER_VALID locks both target configuration registers until hardware clears them.
+        [br] Cleared by hardware on a terminal TARGET_STATUS write and when the mailbox is released.";
+        field {sw=rw; hw=r; hwclr; precedence=hw; swwe=target_cfg_write_en;} user[32]=0;
+    } mbox_target_user;
+
+    reg {
+        name="Mailbox Target USER Valid";
+        desc="Indicates that TARGET_USER identifies the active target.
+        [br] Writable only by Root while this field is 0. Writing 1 locks TARGET_USER and TARGET_USER_VALID until hardware clears both.
+        [br] Cleared by hardware on a terminal TARGET_STATUS write and when the mailbox is released.";
+        field {sw=rw; hw=r; hwclr; precedence=hw; swwe=target_cfg_write_en; swmod=true;} valid=0;
+    } mbox_target_user_valid;
+
+    reg {
+        name="Mailbox Command";
+        desc="Command requested for data in mailbox. Writable only by the current SRAM owner. Cleared when lock is cleared.";
+        field {sw=rw;hwclr; swwe=valid_sram_owner_req; } command[32]=0;
+    } mbox_cmd;
+
+    reg {
+        name="Mailbox Data Length";
+        desc="Data length for mailbox access in bytes. Writable by the current SRAM owner, so the agent that produced the data reports its length. Cleared when lock is cleared";
+        field {sw=rw; hw=r; hwclr;  swwe=valid_sram_owner_req; } length[32]=0;
+    } mbox_dlen;
+
+    reg {
+        name="Mailbox Execute";
+        desc="Mailbox execute register indicates to receiver that the sender is done. Writable only by the current SRAM owner. Writing 0 releases the mailbox.";
+        field {sw=rw; hw=r; swwe=valid_sram_owner_req; swmod=true;} execute=0;
+    } mbox_execute;
+
+    reg {   name="Mailbox Target Status";
+        desc="Status published by the current target user";
+        field {
+            name = "Mailbox Target Status";
+            desc = "Indicates the status of the mailbox for the target user. Written only by the current target user and read by Root. Writing any terminal (non-BUSY) value ends the target's SRAM ownership, clears TARGET_USER and TARGET_USER_VALID, and notifies Root. Reset to BUSY by hardware on each target handoff.";
+
+            enum mbox_status_e {
+                CMD_BUSY = 4'd0 {
+                    desc = "Target is busy, command is not yet complete.";
+                };
+                DATA_READY = 4'd1 {
+                    desc = "Requested data is ready in the mailbox.";
+                };
+                CMD_COMPLETE = 4'd2 {
+                    desc = "Requested command is complete.";
+                };
+                CMD_FAILURE = 4'd3 {
+                    desc = "The requested command experienced a failure.";
+                };
+            };
+            sw=rw; hw=r; swwe=valid_target_req; encode = mbox_status_e; hwclr; precedence=hw; swmod=true;} status[4]=0;
+    } mbox_target_status;
+
+    reg {  
+        name="Mailbox Command Status";
+        desc="Status of the mailbox command";
+        field {
+            name = "Mailbox Status";
+            desc = "Indicates the status of the mailbox command. Written only by MCU and polled by the Requester. Writing any terminal (non-BUSY) value returns SRAM ownership to the Requester. Not used when MCU is itself the Requester.";
+
+            enum mbox_status_e {
+                CMD_BUSY = 4'd0 {
+                    desc = "MCU is busy, command is not yet complete.";
+                };
+                DATA_READY = 4'd1 {
+                    desc = "Requested data is ready in the mailbox.";
+                };
+                CMD_COMPLETE = 4'd2 {
+                    desc = "Requested command is complete.";
+                };
+                CMD_FAILURE = 4'd3 {
+                    desc = "The requested command experienced a failure.";
+                };
+            };
+            sw=rw; hw=r; swwe=valid_root_req; encode = mbox_status_e; hwclr; precedence=hw;} status[4]=0;
+    } mbox_cmd_status;
+
+    reg {  
+        name="Mailbox HW Status";
+        desc="HW status of the mailbox";
+        field {
+            name = "Mailbox ECC Single Error";
+            desc = "Indicates a correctable ECC single-bit error was
+                    detected and corrected while reading dataout.
+                    Auto-clears when mbox_execute field is cleared.";
+
+            sw=r; hwset = true; hw=rw; wel; } ecc_single_error=1'b0;
+        field {
+            name = "Mailbox ECC Double Error";
+            desc = "Indicates an uncorrectable ECC double-bit error
+                    was detected while reading dataout.
+                    Firmware developers are advised to set the command
+                    status to CMD_FAILURE in response.
+                    Auto-clears when mbox_execute field is cleared.";
+
+            sw=r; hwset = true; hw=rw; wel; } ecc_double_error=1'b0;
+        field {
+            name = "Mailbox SRAM Owner";
+            desc = "Current exclusive owner of the mailbox SRAM.";
+
+            enum mbox_owner_e {
+                NONE = 2'd0 {
+                    desc = "No software agent owns the SRAM.";
+                };
+                REQUESTER = 2'd1 {
+                    desc = "The mailbox lock holder owns the SRAM.";
+                };
+                ROOT = 2'd2 {
+                    desc = "The root AXI user owns the SRAM. MCU is typically the root user.";
+                };
+                TARGET = 2'd3 {
+                    desc = "The agent selected by TARGET_USER and enabled by TARGET_USER_VALID owns the SRAM.";
+                };
+            };
+            sw=r; hw=w; encode = mbox_owner_e;} sram_owner[2]=0;
+    } mbox_hw_status;
+
+
+    // This will auto clear the status register whenever a mailbox transfer
+    // is not in progress. 1-cycle delayed from when the Receiver clears
+    // the execute field.
+    // For errors during AHB (direct-mode) reads, interrupt signals
+    // will be used.
+    mbox_hw_status.ecc_single_error->wel  = mbox_lock.lock;
+    mbox_hw_status.ecc_double_error->wel  = mbox_lock.lock;
+    mbox_hw_status.ecc_single_error->next = mbox_lock.lock;
+    mbox_hw_status.ecc_double_error->next = mbox_lock.lock;
+
+};
